@@ -4,6 +4,9 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 
+const STATUS_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/i;
+const MAX_STATUS_ERRORS = 100;
+
 // Store app status updates (in production, use a proper database)
 let appStatus = {
   lastSeen: null,
@@ -13,6 +16,86 @@ let appStatus = {
   activeUsers: 0,
   errors: []
 };
+
+function normalizeOptionalString(value, fallback = null, maxLength = 120) {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized.slice(0, maxLength) : fallback;
+}
+
+function normalizeActiveUsers(value) {
+  if (value === undefined || value === null || value === '') {
+    return appStatus.activeUsers;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : appStatus.activeUsers;
+}
+
+function normalizeStatusErrors(value) {
+  if (value === undefined || value === null) {
+    return appStatus.errors;
+  }
+
+  const items = Array.isArray(value) ? value : [value];
+  return items
+    .slice(0, MAX_STATUS_ERRORS)
+    .map((item, index) => {
+      if (typeof item === 'string') {
+        const message = normalizeOptionalString(item, null, 500);
+        return message
+          ? {
+              id: `status-${Date.now()}-${index}`,
+              timestamp: new Date().toISOString(),
+              message
+            }
+          : null;
+      }
+
+      if (item && typeof item === 'object') {
+        const message = normalizeOptionalString(
+          item.message || item.error || JSON.stringify(item),
+          null,
+          500
+        );
+        return message
+          ? {
+              id: normalizeOptionalString(item.id, `status-${Date.now()}-${index}`, 80),
+              timestamp: normalizeOptionalString(item.timestamp, new Date().toISOString(), 80),
+              message,
+              stack: normalizeOptionalString(item.stack, null, 4000),
+              context: item.context && typeof item.context === 'object'
+                ? item.context
+                : {}
+            }
+          : null;
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function safeEmitToConfigClients(req, event, payload) {
+  if (!req.io || typeof req.io.to !== 'function') {
+    return;
+  }
+
+  try {
+    const room = req.io.to('config-updates');
+    if (room && typeof room.emit === 'function') {
+      room.emit(event, payload);
+    }
+  } catch (error) {
+    logger.warn(`Skipped ${event} broadcast`, {
+      message: error.message,
+      stack: error.stack
+    });
+  }
+}
 
 // Health check endpoint for the main app
 router.get('/ping', (req, res) => {
@@ -25,18 +108,28 @@ router.get('/ping', (req, res) => {
 
 // Receive status updates from the main app
 router.post('/status', [
-  body('status').isIn(['running', 'error', 'starting', 'stopping']).withMessage('Invalid status'),
-  body('version').optional().isString().withMessage('Version must be a string'),
-  body('configVersion').optional().isString().withMessage('Config version must be a string'),
-  body('activeUsers').optional().isInt({ min: 0 }).withMessage('Active users must be a non-negative integer'),
-  body('errors').optional().isArray().withMessage('Errors must be an array')
+  body('status')
+    .isString()
+    .trim()
+    .matches(STATUS_PATTERN)
+    .withMessage('Status must be a safe app status string'),
+  body('version').optional({ nullable: true }).isString().isLength({ max: 120 }).withMessage('Version must be a string'),
+  body('configVersion').optional({ nullable: true }).isString().isLength({ max: 120 }).withMessage('Config version must be a string'),
+  body('activeUsers').optional({ nullable: true }).custom((value) => {
+    if (value === '') return true;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed >= 0;
+  }).withMessage('Active users must be a non-negative integer'),
+  body('errors').optional({ nullable: true }).custom((value) => {
+    return Array.isArray(value) || typeof value === 'string';
+  }).withMessage('Errors must be an array or string')
 ], (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
+    const validationErrors = validationResult(req);
+    if (!validationErrors.isEmpty()) {
       return res.status(400).json({
         error: 'Validation failed',
-        details: errors.array()
+        details: validationErrors.array()
       });
     }
 
@@ -45,23 +138,23 @@ router.post('/status', [
     // Update app status
     appStatus = {
       lastSeen: new Date().toISOString(),
-      status: status || appStatus.status,
-      version: version || appStatus.version,
-      configVersion: configVersion || appStatus.configVersion,
-      activeUsers: activeUsers !== undefined ? activeUsers : appStatus.activeUsers,
-      errors: appErrors || appStatus.errors
+      status: normalizeOptionalString(status, appStatus.status, 64),
+      version: normalizeOptionalString(version, appStatus.version, 120),
+      configVersion: normalizeOptionalString(configVersion, appStatus.configVersion, 120),
+      activeUsers: normalizeActiveUsers(activeUsers),
+      errors: normalizeStatusErrors(appErrors)
     };
 
-    logger.info(`App status update received: ${status}`);
+    logger.info(`App status update received: ${appStatus.status}`);
     
     // Broadcast status update to connected clients via WebSocket
-    if (req.io) {
-      req.io.to('config-updates').emit('app-status-update', appStatus);
-    }
+    safeEmitToConfigClients(req, 'app-status-update', appStatus);
 
     res.json({
+      success: true,
       message: 'Status update received',
-      timestamp: appStatus.lastSeen
+      timestamp: appStatus.lastSeen,
+      appStatus
     });
   } catch (error) {
     logger.error('App status update error:', error);
@@ -118,9 +211,7 @@ router.post('/error', [
     logger.error(`App error reported: ${errorMessage}`, { stack, context });
     
     // Broadcast error to connected clients
-    if (req.io) {
-      req.io.to('config-updates').emit('app-error', errorReport);
-    }
+    safeEmitToConfigClients(req, 'app-error', errorReport);
 
     res.json({
       message: 'Error report received',
@@ -141,9 +232,7 @@ router.delete('/errors', (req, res) => {
   logger.info('App error history cleared');
   
   // Broadcast error clear to connected clients
-  if (req.io) {
-    req.io.to('config-updates').emit('errors-cleared');
-  }
+  safeEmitToConfigClients(req, 'errors-cleared');
 
   res.json({
     message: 'Error history cleared'
