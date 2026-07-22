@@ -12,6 +12,7 @@ function loadVpnRoutes({ servers, showOnlyCustom = false }) {
 
   let getFilteredCalls = 0;
   let currentShowOnlyCustom = showOnlyCustom;
+  let lastFindAndCountWhere = null;
 
   require.cache[databasePath] = {
     exports: {
@@ -29,6 +30,13 @@ function loadVpnRoutes({ servers, showOnlyCustom = false }) {
           async getFilteredServers() {
             getFilteredCalls += 1;
             return servers;
+          },
+          async findAndCountAll(options) {
+            lastFindAndCountWhere = options.where;
+            return {
+              rows: [],
+              count: 0,
+            };
           },
           async findByPk() {
             return null;
@@ -58,6 +66,7 @@ function loadVpnRoutes({ servers, showOnlyCustom = false }) {
   return {
     routes,
     getFilteredCalls: () => getFilteredCalls,
+    lastFindAndCountWhere: () => lastFindAndCountWhere,
   };
 }
 
@@ -153,6 +162,16 @@ async function run() {
   assert.equal(response.headers['x-vpn-cache'], 'MISS');
   assert.equal(routeState.getFilteredCalls(), 2);
   assert.equal(response.body._metadata.showOnlyCustomServers, true);
+
+  response = await request(app)
+    .get('/api/vpn-servers?custom=true&limit=1000')
+    .expect(200);
+
+  assert.equal(response.body.success, true);
+  assert.equal(response.body.pagination.limit, 1000);
+  assert.deepEqual(routeState.lastFindAndCountWhere(), {
+    is_custom: true,
+  });
 
   console.log('VPN active route tests passed');
 }

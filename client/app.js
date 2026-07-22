@@ -4246,12 +4246,38 @@ window.showTab = function(tabName) {
 
 let vpnServers = [];
 let filteredVpnServers = [];
+let showOnlyCustomVpnServers = false;
+
+function isCustomVpnServer(server) {
+    return server?.is_custom === true ||
+        server?.is_custom === 1 ||
+        String(server?.is_custom || '').toLowerCase() === 'true';
+}
+
+function updateVpnServerFilterStatus() {
+    const status = document.getElementById('serverFilterStatus');
+    if (!status) return;
+
+    const customCount = vpnServers.filter(isCustomVpnServer).length;
+    status.textContent = showOnlyCustomVpnServers
+        ? `App visibility: custom only (${customCount}/${vpnServers.length})`
+        : `App visibility: all servers (${vpnServers.length})`;
+}
+
+function updateVpnServerCount() {
+    const serverCount = document.getElementById('serverCount');
+    if (!serverCount) return;
+
+    const customCount = vpnServers.filter(isCustomVpnServer).length;
+    serverCount.textContent = showOnlyCustomVpnServers
+        ? `${filteredVpnServers.length} shown - ${customCount} custom - ${vpnServers.length} total`
+        : `${filteredVpnServers.length} shown - ${vpnServers.length} total`;
+}
 
 // Refresh VPN server list
 window.refreshVpnServerList = async function() {
     console.log('🔄 Refreshing VPN server list...');
     const tbody = document.getElementById('vpnServerTableBody');
-    const serverCount = document.getElementById('serverCount');
 
     if (tbody) {
         tbody.innerHTML = `
@@ -4265,20 +4291,14 @@ window.refreshVpnServerList = async function() {
     }
 
     try {
-        // Load both server list and filter setting
-        const [serverResponse] = await Promise.all([
-            apiCall('/api/vpn-servers'),
-            loadVpnServerFilterSetting()
-        ]);
+        // Load filter first so the admin list mirrors app visibility.
+        await loadVpnServerFilterSetting();
+        const serverResponse = await apiCall('/api/vpn-servers?limit=1000');
 
         vpnServers = serverResponse.data || [];
-        filteredVpnServers = [...vpnServers];
-        displayVpnServers(filteredVpnServers);
         updateServerCountryFilter();
-
-        if (serverCount) {
-            serverCount.textContent = `${vpnServers.length} server(s) total`;
-        }
+        filterVpnServers();
+        updateVpnServerFilterStatus();
     } catch (error) {
         console.error('Error loading VPN servers:', error);
         if (tbody) {
@@ -4387,23 +4407,25 @@ window.filterVpnServers = function() {
     const countryFilter = document.getElementById('serverCountryFilter')?.value || '';
 
     filteredVpnServers = vpnServers.filter(server => {
+        const matchesCustom = !showOnlyCustomVpnServers || isCustomVpnServer(server);
+        const serverName = String(server.name || '').toLowerCase();
+        const serverHostname = String(server.hostname || '').toLowerCase();
+        const serverIp = String(server.ip || '');
+        const serverCountry = String(server.country_short || '');
         const matchesSearch = !searchTerm ||
-            server.name.toLowerCase().includes(searchTerm) ||
-            server.hostname.toLowerCase().includes(searchTerm) ||
-            server.ip.includes(searchTerm);
+            serverName.includes(searchTerm) ||
+            serverHostname.includes(searchTerm) ||
+            serverIp.includes(searchTerm);
 
         const matchesStatus = !statusFilter || server.is_active.toString() === statusFilter;
-        const matchesCountry = !countryFilter || server.country_short === countryFilter;
+        const matchesCountry = !countryFilter || serverCountry === countryFilter;
 
-        return matchesSearch && matchesStatus && matchesCountry;
+        return matchesSearch && matchesStatus && matchesCountry && matchesCustom;
     });
 
     displayVpnServers(filteredVpnServers);
-
-    const serverCount = document.getElementById('serverCount');
-    if (serverCount) {
-        serverCount.textContent = `${filteredVpnServers.length} of ${vpnServers.length} server(s)`;
-    }
+    updateVpnServerCount();
+    updateVpnServerFilterStatus();
 };
 
 // Clear VPN server filters
@@ -4578,20 +4600,24 @@ window.loadVpnServerFilterSetting = async function() {
     try {
         const response = await apiCall('/api/vpn-servers/settings/filter');
         const showOnlyCustom = response.data.showOnlyCustomServers;
+        showOnlyCustomVpnServers = Boolean(showOnlyCustom);
 
         const toggle = document.getElementById('showOnlyCustomServersToggle');
         if (toggle) {
-            toggle.checked = showOnlyCustom;
+            toggle.checked = showOnlyCustomVpnServers;
         }
 
-        console.log('✅ VPN server filter setting loaded:', showOnlyCustom);
+        updateVpnServerFilterStatus();
+        console.log('✅ VPN server filter setting loaded:', showOnlyCustomVpnServers);
     } catch (error) {
         console.error('Error loading VPN server filter setting:', error);
         // Default to false if there's an error
+        showOnlyCustomVpnServers = false;
         const toggle = document.getElementById('showOnlyCustomServersToggle');
         if (toggle) {
             toggle.checked = false;
         }
+        updateVpnServerFilterStatus();
     }
 };
 
@@ -4601,6 +4627,7 @@ window.toggleCustomServersFilter = async function() {
     if (!toggle) return;
 
     const showOnlyCustom = toggle.checked;
+    toggle.disabled = true;
 
     try {
         console.log('🔄 Updating VPN server filter setting:', showOnlyCustom);
@@ -4613,19 +4640,22 @@ window.toggleCustomServersFilter = async function() {
         });
 
         console.log('✅ VPN server filter setting updated:', response);
+        showOnlyCustomVpnServers = Boolean(response.data?.showOnlyCustomServers ?? showOnlyCustom);
+        toggle.checked = showOnlyCustomVpnServers;
 
-        // Show success message
-        showAlert('success', `Filter updated: ${showOnlyCustom ? 'Showing only custom servers' : 'Showing all servers'}`);
-
-        // Note: We don't refresh the admin server list here since this affects the Flutter app, not the admin panel
-        // The admin panel always shows all servers for management purposes
+        // Show success message and update admin table immediately too.
+        showAlert('success', `Filter updated: ${showOnlyCustomVpnServers ? 'Showing only custom servers' : 'Showing all servers'}`);
+        filterVpnServers();
 
     } catch (error) {
         console.error('Error updating VPN server filter setting:', error);
         showAlert('error', 'Error updating filter setting: ' + error.message);
 
         // Revert the toggle on error
-        toggle.checked = !showOnlyCustom;
+        toggle.checked = showOnlyCustomVpnServers;
+    } finally {
+        toggle.disabled = false;
+        updateVpnServerFilterStatus();
     }
 };
 

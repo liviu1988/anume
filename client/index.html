@@ -2296,10 +2296,15 @@
 
                             <!-- VPN Server Visibility Toggle -->
                             <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--dark-surface); border-radius: 6px; border: 1px solid var(--border-color);">
-                                <label for="showOnlyCustomServersToggle" style="margin: 0; font-size: 14px; color: var(--text-primary); cursor: pointer;">
-                                    <i class="fas fa-filter" style="margin-right: 6px; color: var(--primary-color);"></i>
-                                    Show Only Custom Servers
-                                </label>
+                                <div>
+                                    <label for="showOnlyCustomServersToggle" style="margin: 0; font-size: 14px; color: var(--text-primary); cursor: pointer;">
+                                        <i class="fas fa-filter" style="margin-right: 6px; color: var(--primary-color);"></i>
+                                        Show Only Custom Servers
+                                    </label>
+                                    <div id="serverFilterStatus" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+                                        App visibility: loading...
+                                    </div>
+                                </div>
                                 <div class="toggle-switch">
                                     <input type="checkbox" id="showOnlyCustomServersToggle" onchange="toggleCustomServersFilter()">
                                     <span class="toggle-slider"></span>

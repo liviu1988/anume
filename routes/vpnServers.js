@@ -101,12 +101,16 @@ function setActiveVpnCacheHeaders(res, cacheState) {
 // Get all VPN servers (admin only)
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { page = 1, limit = 50, country, active } = req.query;
-    const offset = (page - 1) * limit;
+    const { page = 1, limit = 50, country, active, custom } = req.query;
+    const parsedPage = Math.max(Number.parseInt(page, 10) || 1, 1);
+    const parsedLimit = Math.min(Math.max(Number.parseInt(limit, 10) || 50, 1), 1000);
+    const offset = (parsedPage - 1) * parsedLimit;
 
     const whereClause = {};
     if (country) whereClause.country_short = country;
     if (active !== undefined) whereClause.is_active = active === 'true';
+    const customFilter = parseOptionalBoolean(custom);
+    if (customFilter !== null) whereClause.is_custom = customFilter;
 
     const servers = await VpnServer.findAndCountAll({
       where: whereClause,
@@ -115,19 +119,20 @@ router.get('/', authMiddleware, async (req, res) => {
         as: 'creator',
         attributes: ['id', 'username'],
       }],
-      limit: parseInt(limit),
-      offset: parseInt(offset),
+      limit: parsedLimit,
+      offset,
       order: [['created_at', 'DESC']],
     });
 
     res.json({
       success: true,
       data: servers.rows,
+      count: servers.rows.length,
       pagination: {
         total: servers.count,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        totalPages: Math.ceil(servers.count / limit),
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(servers.count / parsedLimit),
       },
     });
   } catch (error) {
