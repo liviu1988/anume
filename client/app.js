@@ -605,21 +605,25 @@ function displayUsers(users) {
                         ${subscriptionType.charAt(0).toUpperCase() + subscriptionType.slice(1)}
                     </span>
                 </td>
-                <td>
-                    <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                <td class="table-actions-cell">
+                    <div class="table-actions">
                         <button class="btn btn-primary btn-sm" onclick="viewUserDetails('${user.id}')" title="View Details">
                             <i class="fas fa-eye"></i>
+                            <span class="action-label">View</span>
                         </button>
                         <button class="btn btn-warning btn-sm" onclick="toggleUserStatus(${user.id}, ${!user.is_active})" title="${user.is_active ? 'Deactivate' : 'Activate'}">
                             <i class="fas fa-${user.is_active ? 'ban' : 'check'}"></i>
+                            <span class="action-label">${user.is_active ? 'Off' : 'On'}</span>
                         </button>
                         ${isOnline ? `
                             <button class="btn btn-danger btn-sm" onclick="disconnectUser('${user.id}')" title="Disconnect">
                                 <i class="fas fa-sign-out-alt"></i>
+                                <span class="action-label">Out</span>
                             </button>
                         ` : ''}
                         <button class="btn btn-danger btn-sm" onclick="deleteUser(${user.id}, '${user.username}')" title="Delete User" style="background-color: #dc2626;">
                             <i class="fas fa-trash"></i>
+                            <span class="action-label">Del</span>
                         </button>
                     </div>
                 </td>
@@ -754,24 +758,22 @@ function displayAdmins(admins) {
             </td>
             <td>${admin.created_at ? new Date(admin.created_at).toLocaleDateString() : 'Unknown'}</td>
             <td>${admin.last_login ? new Date(admin.last_login).toLocaleString() : 'Never'}</td>
-            <td>
-                <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+            <td class="table-actions-cell">
+                <div class="table-actions">
                     <button class="btn btn-warning btn-sm" onclick="window.changeAdminPassword('${admin.username}')" title="Change Password">
                         <i class="fas fa-key"></i>
+                        <span class="action-label">Key</span>
                     </button>
                     ${admin.role !== 'super_admin' ? `
                         <button class="btn btn-danger btn-sm" onclick="window.deactivateAdmin(${admin.id})" title="Deactivate">
                             <i class="fas fa-ban"></i>
+                            <span class="action-label">Off</span>
                         </button>
                         <button class="btn btn-danger btn-sm" onclick="window.deleteAdmin(${admin.id}, '${admin.username}')" title="Delete Admin" style="background: #dc2626;">
                             <i class="fas fa-trash"></i>
+                            <span class="action-label">Del</span>
                         </button>
                     ` : ''}
-
-                    <!-- Debug info -->
-                    <button class="btn btn-info btn-sm" onclick="console.log('Admin data:', ${JSON.stringify(admin).replace(/'/g, '\\\'')}, 'Delete function:', typeof window.deleteAdmin); alert('Check console for admin data');" title="Debug" style="font-size: 10px;">
-                        🔧
-                    </button>
                 </div>
             </td>
         </tr>
@@ -4289,16 +4291,19 @@ function displayVpnServers(servers) {
                     <span style="font-size: 12px; color: var(--text-muted);">${server.server_load.toFixed(1)}%</span>
                 </div>
             </td>
-            <td>
-                <div style="display: flex; gap: 4px;">
+            <td class="table-actions-cell">
+                <div class="table-actions">
                     <button class="btn btn-secondary btn-sm" onclick="editVpnServer(${server.id})" title="Edit Server">
                         <i class="fas fa-edit"></i>
+                        <span class="action-label">Edit</span>
                     </button>
                     <button class="btn ${server.is_active ? 'btn-warning' : 'btn-success'} btn-sm" onclick="toggleVpnServerStatus(${server.id})" title="${server.is_active ? 'Deactivate' : 'Activate'} Server">
                         <i class="fas fa-${server.is_active ? 'pause' : 'play'}"></i>
+                        <span class="action-label">${server.is_active ? 'Off' : 'On'}</span>
                     </button>
                     <button class="btn btn-danger btn-sm" onclick="deleteVpnServer(${server.id}, '${escapeHtml(server.name)}')" title="Delete Server">
                         <i class="fas fa-trash"></i>
+                        <span class="action-label">Del</span>
                     </button>
                 </div>
             </td>

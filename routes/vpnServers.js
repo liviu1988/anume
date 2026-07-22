@@ -6,6 +6,97 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 const { VpnServer, Admin, AdminSetting } = models;
+const ACTIVE_VPN_CACHE_TTL_MS = 20 * 1000;
+const ACTIVE_VPN_MAX_LIMIT = 1000;
+const activeVpnCache = new Map();
+
+function parseOptionalBoolean(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (value === true || value === false) return value;
+
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return null;
+}
+
+function normalizeActiveVpnQuery(query) {
+  const country = typeof query.country === 'string'
+    ? query.country.trim().toUpperCase().slice(0, 10)
+    : '';
+  const featured = parseOptionalBoolean(query.featured);
+  const requestedLimit = Number.parseInt(query.limit, 10);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(Math.max(requestedLimit, 1), ACTIVE_VPN_MAX_LIMIT)
+    : null;
+
+  return {
+    country: country || null,
+    featured,
+    limit,
+  };
+}
+
+function activeVpnCacheKey(showOnlyCustom, filters) {
+  return JSON.stringify({
+    showOnlyCustom,
+    country: filters.country,
+    featured: filters.featured,
+    limit: filters.limit,
+  });
+}
+
+function applyActiveVpnFilters(servers, filters) {
+  let filteredServers = servers;
+
+  if (filters.country) {
+    filteredServers = filteredServers.filter((server) =>
+      String(server.CountryShort || '').toUpperCase() === filters.country
+    );
+  }
+
+  if (filters.featured !== null) {
+    filteredServers = filteredServers.filter(
+      (server) => Boolean(server._isFeatured) === filters.featured
+    );
+  }
+
+  if (filters.limit !== null) {
+    filteredServers = filteredServers.slice(0, filters.limit);
+  }
+
+  return filteredServers;
+}
+
+function buildCountrySummary(servers) {
+  const countries = new Map();
+
+  for (const server of servers) {
+    const code = String(server.CountryShort || '').toUpperCase();
+    if (!code) continue;
+
+    const existing = countries.get(code) || {
+      countryShort: code,
+      countryLong: server.CountryLong || code,
+      count: 0,
+    };
+    existing.count += 1;
+    countries.set(code, existing);
+  }
+
+  return Array.from(countries.values()).sort((a, b) =>
+    a.countryLong.localeCompare(b.countryLong)
+  );
+}
+
+function invalidateActiveVpnCache() {
+  activeVpnCache.clear();
+}
+
+function setActiveVpnCacheHeaders(res, cacheState) {
+  res.set('Cache-Control', 'public, max-age=20, stale-while-revalidate=60');
+  res.set('X-VPN-Cache', cacheState);
+}
 
 // Get all VPN servers (admin only)
 router.get('/', authMiddleware, async (req, res) => {
@@ -54,22 +145,44 @@ router.get('/active', async (req, res) => {
   try {
     // Get the filtering setting from admin settings
     const showOnlyCustom = await AdminSetting.getShowOnlyCustomServers();
+    const filters = normalizeActiveVpnQuery(req.query);
+    const cacheKey = activeVpnCacheKey(showOnlyCustom, filters);
+    const cached = activeVpnCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.createdAt < ACTIVE_VPN_CACHE_TTL_MS) {
+      setActiveVpnCacheHeaders(res, 'HIT');
+      return res.json(cached.payload);
+    }
 
     // Use the new filtered method instead of getActiveServers
     const servers = await VpnServer.getFilteredServers(showOnlyCustom);
     const flutterFormatServers = servers.map(server => server.toFlutterFormat());
-
-    logger.info(`Serving ${flutterFormatServers.length} VPN servers (showOnlyCustom: ${showOnlyCustom})`);
-
-    res.json({
+    const filteredServers = applyActiveVpnFilters(flutterFormatServers, filters);
+    const countries = buildCountrySummary(flutterFormatServers);
+    const payload = {
       success: true,
-      data: flutterFormatServers,
-      count: flutterFormatServers.length,
+      data: filteredServers,
+      count: filteredServers.length,
       _metadata: {
         showOnlyCustomServers: showOnlyCustom,
         totalServers: flutterFormatServers.length,
+        returnedServers: filteredServers.length,
+        generatedAt: new Date().toISOString(),
+        cacheTtlSeconds: ACTIVE_VPN_CACHE_TTL_MS / 1000,
+        filters,
+        countries,
       },
+    };
+
+    activeVpnCache.set(cacheKey, {
+      createdAt: Date.now(),
+      payload,
     });
+
+    logger.info(`Serving ${filteredServers.length}/${flutterFormatServers.length} VPN servers (showOnlyCustom: ${showOnlyCustom})`);
+
+    setActiveVpnCacheHeaders(res, 'MISS');
+    res.json(payload);
   } catch (error) {
     logger.error('Error fetching active VPN servers:', error);
     res.status(500).json({
@@ -164,6 +277,7 @@ router.post('/', [
     };
 
     const server = await VpnServer.create(serverData);
+    invalidateActiveVpnCache();
 
     logger.info(`VPN server created: ${server.name} by admin ${req.user.username}`);
 
@@ -222,6 +336,7 @@ router.put('/:id', [
     }
 
     await server.update(req.body);
+    invalidateActiveVpnCache();
 
     logger.info(`VPN server updated: ${server.name} by admin ${req.user.username}`);
 
@@ -265,6 +380,7 @@ router.delete('/:id', [
 
     const serverName = server.name;
     await server.destroy();
+    invalidateActiveVpnCache();
 
     logger.info(`VPN server deleted: ${serverName} by admin ${req.user.username}`);
 
@@ -306,6 +422,7 @@ router.patch('/:id/toggle', [
     }
 
     await server.update({ is_active: !server.is_active });
+    invalidateActiveVpnCache();
 
     logger.info(`VPN server ${server.is_active ? 'activated' : 'deactivated'}: ${server.name} by admin ${req.user.username}`);
 
@@ -362,6 +479,7 @@ router.put('/settings/filter', [
 
     const { showOnlyCustomServers } = req.body;
     await AdminSetting.setShowOnlyCustomServers(showOnlyCustomServers);
+    invalidateActiveVpnCache();
 
     logger.info(`VPN server filter setting updated: showOnlyCustomServers=${showOnlyCustomServers} by admin ${req.user.username}`);
 

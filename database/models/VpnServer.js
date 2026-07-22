@@ -1,5 +1,21 @@
 const { DataTypes } = require('sequelize');
 
+function safeString(value, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function safeNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function safeBoolean(value, fallback = false) {
+  if (value === null || value === undefined) return fallback;
+  return Boolean(value);
+}
+
 module.exports = (sequelize) => {
   const VpnServer = sequelize.define('VpnServer', {
     id: {
@@ -173,29 +189,41 @@ module.exports = (sequelize) => {
 
   // Instance methods
   VpnServer.prototype.toFlutterFormat = function() {
+    const countryShort = safeString(this.country_short).toUpperCase();
+    const countryLong = safeString(this.country_long, countryShort || 'Unknown');
+    const serverName = safeString(
+      this.name,
+      countryShort ? `${countryShort} VPN Server` : 'VPN Server'
+    );
+    const hostName = safeString(this.hostname, safeString(this.ip));
+    const ipAddress = safeString(this.ip, hostName);
+    const createdAt = this.created_at
+      ? new Date(this.created_at).toISOString()
+      : null;
+
     return {
-      HostName: this.hostname,
-      IP: this.ip,
-      Ping: this.ping,
-      Speed: this.speed,
-      CountryLong: this.country_long,
-      CountryShort: this.country_short,
-      NumVpnSessions: this.num_vpn_sessions,
-      OpenVPN_ConfigData_Base64: this.openvpn_config_base64,
+      HostName: hostName,
+      IP: ipAddress,
+      Ping: safeString(this.ping, '0'),
+      Speed: safeNumber(this.speed),
+      CountryLong: countryLong,
+      CountryShort: countryShort,
+      NumVpnSessions: safeNumber(this.num_vpn_sessions),
+      OpenVPN_ConfigData_Base64: safeString(this.openvpn_config_base64),
       // Authentication credentials
-      Username: this.username,
-      Password: this.password,
+      Username: safeString(this.username),
+      Password: safeString(this.password),
       // Additional custom server metadata
-      _isCustomServer: this.is_custom,
+      _isCustomServer: safeBoolean(this.is_custom),
       _serverId: this.id,
-      _serverName: this.name,
-      _port: this.port,
-      _protocol: this.protocol,
-      _maxConnections: this.max_connections,
-      _serverLoad: this.server_load,
-      _location: this.location,
-      _isFeatured: this.is_featured,
-      _createdAt: this.created_at,
+      _serverName: serverName,
+      _port: safeNumber(this.port, 1194),
+      _protocol: safeString(this.protocol, 'udp').toLowerCase(),
+      _maxConnections: safeNumber(this.max_connections, 100),
+      _serverLoad: safeNumber(this.server_load),
+      _location: safeString(this.location),
+      _isFeatured: safeBoolean(this.is_featured),
+      _createdAt: createdAt,
     };
   };
 

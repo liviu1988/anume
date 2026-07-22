@@ -912,12 +912,17 @@
             background: var(--dark-surface);
             border: 1px solid var(--border-color);
             border-radius: 12px;
-            overflow: hidden;
+            max-width: 100%;
+            overflow-x: auto;
+            overflow-y: visible;
+            scrollbar-color: var(--primary-color) var(--dark-surface-light);
         }
 
         .table {
             width: 100%;
-            border-collapse: collapse;
+            min-width: 1040px;
+            border-collapse: separate;
+            border-spacing: 0;
         }
 
         .table th,
@@ -941,6 +946,68 @@
 
         .table tr:hover {
             background: var(--dark-surface-light);
+        }
+
+        .table-actions-header {
+            width: 220px;
+            min-width: 220px;
+            background: var(--dark-surface-light);
+        }
+
+        .table-actions-cell {
+            width: 220px;
+            min-width: 220px;
+            background: var(--dark-surface);
+            white-space: nowrap;
+        }
+
+        .table tr:hover .table-actions-cell {
+            background: var(--dark-surface-light);
+        }
+
+        .table-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 6px;
+            flex-wrap: nowrap;
+        }
+
+        .table-actions .btn {
+            width: auto;
+            min-width: 52px;
+            height: 34px;
+            padding: 0 12px;
+            margin: 0;
+            border-radius: 999px;
+            box-shadow: none;
+            gap: 5px;
+            color: white;
+        }
+
+        .table-actions .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
+        }
+
+        .table-actions .btn:focus-visible {
+            outline: 2px solid rgba(255, 255, 255, 0.9);
+            outline-offset: 2px;
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.25);
+        }
+
+        .table-actions .btn i {
+            display: none;
+        }
+
+        .table-actions .action-label {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0;
+            line-height: 1;
+            text-transform: uppercase;
+            color: currentColor;
         }
 
         /* Responsive Design */
@@ -1023,6 +1090,11 @@
             .btn {
                 width: 100%;
                 justify-content: center;
+            }
+
+            .table-actions .btn {
+                width: auto;
+                min-width: 52px;
             }
 
             .table-container {
@@ -1905,10 +1977,6 @@
                                 Logout
                             </button>
 
-                            <!-- Debug button -->
-                            <button class="btn btn-info btn-sm" onclick="console.log('Functions check:', {testConnection: typeof window.testConnection, viewLogs: typeof window.viewLogs, createBackup: typeof window.createBackup, logout: typeof window.logout}); alert('Check console for function availability');" style="font-size: 12px; margin-top: 8px;">
-                                🔧 Debug Functions
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -2116,7 +2184,7 @@
                                         <th onclick="sortUsers('subscription_type')" style="cursor: pointer;">
                                             Subscription <i class="fas fa-sort"></i>
                                         </th>
-                                        <th>Actions</th>
+                                        <th class="table-actions-header">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="userTableBody">
@@ -2252,7 +2320,7 @@
                                         <th>Protocol</th>
                                         <th>Status</th>
                                         <th>Load</th>
-                                        <th>Actions</th>
+                                        <th class="table-actions-header">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="vpnServerTableBody">
@@ -2321,7 +2389,7 @@
                                         <th>Role</th>
                                         <th>Created</th>
                                         <th>Last Login</th>
-                                        <th>Actions</th>
+                                        <th class="table-actions-header">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="adminTableBody">
@@ -2330,11 +2398,13 @@
                                         <td><span class="user-status online">Super Admin</span></td>
                                         <td>System Default</td>
                                         <td>Current Session</td>
-                                        <td>
-                                            <button class="btn btn-warning btn-sm" onclick="changeAdminPassword('admin')">
-                                                <i class="fas fa-key"></i>
-                                                Change Password
-                                            </button>
+                                        <td class="table-actions-cell">
+                                            <div class="table-actions">
+                                                <button class="btn btn-warning btn-sm" onclick="changeAdminPassword('admin')" title="Change Password">
+                                                    <i class="fas fa-key"></i>
+                                                    <span class="action-label">Key</span>
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 </tbody>

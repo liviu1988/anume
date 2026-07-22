@@ -6,16 +6,32 @@ const router = express.Router();
 
 const STATUS_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/i;
 const MAX_STATUS_ERRORS = 100;
+const MAX_METADATA_KEYS = 30;
+const MAX_METADATA_VALUE_LENGTH = 500;
+const MAX_CONTEXT_KEYS = 20;
+const APP_STATUS_STALE_AFTER_MS = Math.max(
+  30_000,
+  Number.parseInt(process.env.APP_STATUS_STALE_AFTER_MS || '', 10) || 5 * 60_000
+);
+const APP_STATUS_BROADCAST_DEDUP_MS = Math.max(
+  1_000,
+  Number.parseInt(process.env.APP_STATUS_BROADCAST_DEDUP_MS || '', 10) || 30_000
+);
 
 // Store app status updates (in production, use a proper database)
 let appStatus = {
   lastSeen: null,
+  clientTimestamp: null,
   status: 'unknown',
+  originalStatus: null,
   version: null,
   configVersion: null,
   activeUsers: 0,
+  metadata: {},
   errors: []
 };
+let lastStatusBroadcastFingerprint = null;
+let lastStatusBroadcastAt = 0;
 
 function normalizeOptionalString(value, fallback = null, maxLength = 120) {
   if (value === undefined || value === null) {
@@ -33,6 +49,15 @@ function normalizeActiveUsers(value) {
 
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : appStatus.activeUsers;
+}
+
+function normalizeIsoTimestamp(value, fallback = null) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  const date = new Date(String(value).trim());
+  return Number.isNaN(date.getTime()) ? fallback : date.toISOString();
 }
 
 function normalizeStatusErrors(value) {
@@ -64,12 +89,10 @@ function normalizeStatusErrors(value) {
         return message
           ? {
               id: normalizeOptionalString(item.id, `status-${Date.now()}-${index}`, 80),
-              timestamp: normalizeOptionalString(item.timestamp, new Date().toISOString(), 80),
+              timestamp: normalizeIsoTimestamp(item.timestamp, new Date().toISOString()),
               message,
               stack: normalizeOptionalString(item.stack, null, 4000),
-              context: item.context && typeof item.context === 'object'
-                ? item.context
-                : {}
+              context: normalizeMetadata(item.context, {}, MAX_CONTEXT_KEYS)
             }
           : null;
       }
@@ -77,6 +100,27 @@ function normalizeStatusErrors(value) {
       return null;
     })
     .filter(Boolean);
+}
+
+function normalizeMetadata(
+  value,
+  fallback = appStatus.metadata,
+  maxKeys = MAX_METADATA_KEYS
+) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return fallback;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .slice(0, maxKeys)
+      .map(([key, item]) => [
+        normalizeOptionalString(key, 'unknown', 80),
+        typeof item === 'object' && item !== null
+          ? JSON.stringify(item).slice(0, MAX_METADATA_VALUE_LENGTH)
+          : normalizeOptionalString(item, '', MAX_METADATA_VALUE_LENGTH)
+      ])
+  );
 }
 
 function safeEmitToConfigClients(req, event, payload) {
@@ -97,6 +141,86 @@ function safeEmitToConfigClients(req, event, payload) {
   }
 }
 
+function getAppStatusHealth(now = new Date()) {
+  const lastSeenTime = appStatus.lastSeen ? Date.parse(appStatus.lastSeen) : NaN;
+  const lastSeenAgeSeconds = Number.isFinite(lastSeenTime)
+    ? Math.max(0, Math.floor((now.getTime() - lastSeenTime) / 1000))
+    : null;
+  const isStale =
+    lastSeenAgeSeconds === null ||
+    lastSeenAgeSeconds * 1000 > APP_STATUS_STALE_AFTER_MS;
+  const hasErrors = Array.isArray(appStatus.errors) && appStatus.errors.length > 0;
+  const statusLower = String(appStatus.status || '').toLowerCase();
+  const hasErrorStatus = ['error', 'failed', 'crashed', 'stopped'].some((token) =>
+    statusLower.includes(token)
+  );
+
+  return {
+    state: appStatus.status === 'unknown'
+      ? 'unknown'
+      : hasErrorStatus
+        ? 'error'
+        : isStale
+          ? 'stale'
+          : hasErrors
+            ? 'warning'
+            : 'healthy',
+    isStale,
+    hasErrors,
+    lastSeenAgeSeconds,
+    staleAfterSeconds: Math.floor(APP_STATUS_STALE_AFTER_MS / 1000)
+  };
+}
+
+function buildAppStatusPayload() {
+  return {
+    ...appStatus,
+    health: getAppStatusHealth()
+  };
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+function buildStatusBroadcastFingerprint(payload) {
+  return stableStringify({
+    status: payload.status,
+    originalStatus: payload.originalStatus,
+    version: payload.version,
+    configVersion: payload.configVersion,
+    activeUsers: payload.activeUsers,
+    metadata: payload.metadata,
+    errors: payload.errors
+  });
+}
+
+function shouldBroadcastAppStatus(payload, now = Date.now()) {
+  const fingerprint = buildStatusBroadcastFingerprint(payload);
+  const isDuplicate = fingerprint === lastStatusBroadcastFingerprint;
+  const isInsideDedupWindow =
+    now - lastStatusBroadcastAt < APP_STATUS_BROADCAST_DEDUP_MS;
+
+  if (isDuplicate && isInsideDedupWindow) {
+    return false;
+  }
+
+  lastStatusBroadcastFingerprint = fingerprint;
+  lastStatusBroadcastAt = now;
+  return true;
+}
+
 // Health check endpoint for the main app
 router.get('/ping', (req, res) => {
   res.json({
@@ -113,16 +237,19 @@ router.post('/status', [
     .trim()
     .matches(STATUS_PATTERN)
     .withMessage('Status must be a safe app status string'),
+  body('timestamp').optional({ nullable: true }).isString().isLength({ max: 80 }).withMessage('Timestamp must be a string'),
+  body('originalStatus').optional({ nullable: true }).isString().isLength({ max: 120 }).withMessage('Original status must be a string'),
   body('version').optional({ nullable: true }).isString().isLength({ max: 120 }).withMessage('Version must be a string'),
   body('configVersion').optional({ nullable: true }).isString().isLength({ max: 120 }).withMessage('Config version must be a string'),
+  body('metadata').optional({ nullable: true }).isObject().withMessage('Metadata must be an object'),
   body('activeUsers').optional({ nullable: true }).custom((value) => {
     if (value === '') return true;
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) && parsed >= 0;
   }).withMessage('Active users must be a non-negative integer'),
   body('errors').optional({ nullable: true }).custom((value) => {
-    return Array.isArray(value) || typeof value === 'string';
-  }).withMessage('Errors must be an array or string')
+    return Array.isArray(value) || typeof value === 'string' || (value && typeof value === 'object');
+  }).withMessage('Errors must be an array, object, or string')
 ], (req, res) => {
   try {
     const validationErrors = validationResult(req);
@@ -133,28 +260,46 @@ router.post('/status', [
       });
     }
 
-    const { status, version, configVersion, activeUsers, errors: appErrors } = req.body;
+    const {
+      status,
+      timestamp,
+      originalStatus,
+      version,
+      configVersion,
+      activeUsers,
+      metadata,
+      errors: appErrors
+    } = req.body;
     
     // Update app status
     appStatus = {
       lastSeen: new Date().toISOString(),
+      clientTimestamp: normalizeIsoTimestamp(timestamp, appStatus.clientTimestamp),
       status: normalizeOptionalString(status, appStatus.status, 64),
+      originalStatus: normalizeOptionalString(originalStatus, appStatus.originalStatus, 120),
       version: normalizeOptionalString(version, appStatus.version, 120),
       configVersion: normalizeOptionalString(configVersion, appStatus.configVersion, 120),
       activeUsers: normalizeActiveUsers(activeUsers),
+      metadata: normalizeMetadata(metadata),
       errors: normalizeStatusErrors(appErrors)
     };
 
     logger.info(`App status update received: ${appStatus.status}`);
     
     // Broadcast status update to connected clients via WebSocket
-    safeEmitToConfigClients(req, 'app-status-update', appStatus);
+    const appStatusPayload = buildAppStatusPayload();
+    const broadcasted = shouldBroadcastAppStatus(appStatusPayload);
+    if (broadcasted) {
+      safeEmitToConfigClients(req, 'app-status-update', appStatusPayload);
+    }
 
     res.json({
       success: true,
       message: 'Status update received',
       timestamp: appStatus.lastSeen,
-      appStatus
+      broadcasted,
+      broadcastDedupWindowSeconds: Math.floor(APP_STATUS_BROADCAST_DEDUP_MS / 1000),
+      appStatus: appStatusPayload
     });
   } catch (error) {
     logger.error('App status update error:', error);
@@ -168,7 +313,7 @@ router.post('/status', [
 // Get current app status
 router.get('/status', (req, res) => {
   res.json({
-    appStatus,
+    appStatus: buildAppStatusPayload(),
     adminPanel: {
       status: 'running',
       uptime: process.uptime(),
