@@ -3363,6 +3363,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Set up OVPN file upload functionality
     setupOvpnFileUpload();
+    window.initializeVpnServerFilterToggle();
 });
 
 // ===== CHAT FUNCTIONALITY =====
@@ -4248,10 +4249,19 @@ let vpnServers = [];
 let filteredVpnServers = [];
 let showOnlyCustomVpnServers = false;
 
+function toBooleanValue(value, fallback = false) {
+    if (value === true || value === 1) return true;
+    if (value === false || value === 0 || value === null || value === undefined) return false;
+
+    const normalized = String(value).trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'off', ''].includes(normalized)) return false;
+
+    return fallback;
+}
+
 function isCustomVpnServer(server) {
-    return server?.is_custom === true ||
-        server?.is_custom === 1 ||
-        String(server?.is_custom || '').toLowerCase() === 'true';
+    return toBooleanValue(server?.is_custom, false);
 }
 
 function updateVpnServerFilterStatus() {
@@ -4263,6 +4273,16 @@ function updateVpnServerFilterStatus() {
         ? `App visibility: custom only (${customCount}/${vpnServers.length})`
         : `App visibility: all servers (${vpnServers.length})`;
 }
+
+window.initializeVpnServerFilterToggle = function() {
+    const toggle = document.getElementById('showOnlyCustomServersToggle');
+    if (!toggle || toggle.dataset.bound === 'true') return;
+
+    toggle.dataset.bound = 'true';
+    toggle.addEventListener('change', () => {
+        window.toggleCustomServersFilter();
+    });
+};
 
 function updateVpnServerCount() {
     const serverCount = document.getElementById('serverCount');
@@ -4278,6 +4298,7 @@ function updateVpnServerCount() {
 window.refreshVpnServerList = async function() {
     console.log('🔄 Refreshing VPN server list...');
     const tbody = document.getElementById('vpnServerTableBody');
+    window.initializeVpnServerFilterToggle();
 
     if (tbody) {
         tbody.innerHTML = `
@@ -4320,69 +4341,99 @@ function displayVpnServers(servers) {
     if (!tbody) return;
 
     if (servers.length === 0) {
+        const customCount = vpnServers.filter(isCustomVpnServer).length;
+        const hasFilters =
+            Boolean(document.getElementById('serverSearch')?.value) ||
+            Boolean(document.getElementById('serverStatusFilter')?.value) ||
+            Boolean(document.getElementById('serverCountryFilter')?.value);
+        const emptyTitle = vpnServers.length === 0
+            ? 'No VPN servers found'
+            : showOnlyCustomVpnServers && customCount === 0
+                ? 'No custom VPN servers yet'
+                : 'No servers match these filters';
+        const emptyHint = vpnServers.length === 0
+            ? 'Add a server to make VPN locations available.'
+            : showOnlyCustomVpnServers && customCount === 0
+                ? 'Turn off "Show Only Custom Servers" or add a custom server.'
+                : hasFilters
+                    ? 'Clear filters or change the search terms.'
+                    : 'Try refreshing the server list.';
         tbody.innerHTML = `
             <tr>
                 <td colspan="8" style="text-align: center; color: var(--text-muted);">
                     <i class="fas fa-server" style="margin-right: 8px;"></i>
-                    No VPN servers found
+                    <div style="font-weight: 700; color: var(--text-secondary); margin-bottom: 4px;">${emptyTitle}</div>
+                    <div style="font-size: 13px;">${emptyHint}</div>
                 </td>
             </tr>
         `;
         return;
     }
 
-    tbody.innerHTML = servers.map(server => `
+    tbody.innerHTML = servers.map(server => {
+        const rawLoad = Number(server.server_load);
+        const load = Number.isFinite(rawLoad) ? Math.max(0, Math.min(100, rawLoad)) : 0;
+        const loadColor = load > 80 ? 'var(--error-color)' : load > 60 ? 'var(--warning-color)' : 'var(--success-color)';
+        const serverId = Number.isFinite(Number(server.id)) ? Number(server.id) : 0;
+        const serverName = String(server.name || 'Unnamed VPN server');
+        const onclickName = escapeHtml(serverName.replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+        const countryLong = escapeHtml(server.country_long || server.country_short || 'Unknown');
+        const countryShort = escapeHtml(server.country_short || '--');
+        const isActive = toBooleanValue(server.is_active, false);
+
+        return `
         <tr>
             <td>
                 <div style="font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
                     ${server.is_featured ? '<i class="fas fa-star" style="color: #ffc107; font-size: 14px;" title="Featured Server"></i>' : ''}
-                    ${escapeHtml(server.name)}
+                    ${escapeHtml(serverName)}
                 </div>
                 ${server.location ? `<div style="font-size: 12px; color: var(--text-muted);">${escapeHtml(server.location)}</div>` : ''}
             </td>
-            <td style="font-family: monospace; color: var(--text-secondary);">${escapeHtml(server.hostname)}</td>
-            <td style="font-family: monospace; color: var(--text-secondary);">${escapeHtml(server.ip)}:${server.port}</td>
+            <td style="font-family: monospace; color: var(--text-secondary);">${escapeHtml(server.hostname || '-')}</td>
+            <td style="font-family: monospace; color: var(--text-secondary);">${escapeHtml(server.ip || '-')}:${server.port || '-'}</td>
             <td>
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <span>${escapeHtml(server.country_long)}</span>
-                    <span style="font-size: 12px; color: var(--text-muted);">(${escapeHtml(server.country_short)})</span>
+                    <span>${countryLong}</span>
+                    <span style="font-size: 12px; color: var(--text-muted);">(${countryShort})</span>
                 </div>
             </td>
             <td>
-                <span style="text-transform: uppercase; font-weight: 500; color: var(--accent-color);">${server.protocol}</span>
+                <span style="text-transform: uppercase; font-weight: 500; color: var(--accent-color);">${escapeHtml(server.protocol || 'udp')}</span>
             </td>
             <td>
-                <span class="user-status ${server.is_active ? 'online' : 'offline'}">
+                <span class="user-status ${isActive ? 'online' : 'offline'}">
                     <i class="fas fa-circle" style="font-size: 8px;"></i>
-                    ${server.is_active ? 'Active' : 'Inactive'}
+                    ${isActive ? 'Active' : 'Inactive'}
                 </span>
             </td>
             <td>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <div style="width: 40px; height: 6px; background: var(--dark-surface-light); border-radius: 3px; overflow: hidden;">
-                        <div style="width: ${server.server_load}%; height: 100%; background: ${server.server_load > 80 ? 'var(--error-color)' : server.server_load > 60 ? 'var(--warning-color)' : 'var(--success-color)'}; transition: width 0.3s ease;"></div>
+                        <div style="width: ${load}%; height: 100%; background: ${loadColor}; transition: width 0.3s ease;"></div>
                     </div>
-                    <span style="font-size: 12px; color: var(--text-muted);">${server.server_load.toFixed(1)}%</span>
+                    <span style="font-size: 12px; color: var(--text-muted);">${load.toFixed(1)}%</span>
                 </div>
             </td>
             <td class="table-actions-cell">
                 <div class="table-actions">
-                    <button class="btn btn-secondary btn-sm" onclick="editVpnServer(${server.id})" title="Edit Server">
+                    <button class="btn btn-secondary btn-sm" onclick="editVpnServer(${serverId})" title="Edit Server">
                         <i class="fas fa-edit"></i>
                         <span class="action-label">Edit</span>
                     </button>
-                    <button class="btn ${server.is_active ? 'btn-warning' : 'btn-success'} btn-sm" onclick="toggleVpnServerStatus(${server.id})" title="${server.is_active ? 'Deactivate' : 'Activate'} Server">
-                        <i class="fas fa-${server.is_active ? 'pause' : 'play'}"></i>
-                        <span class="action-label">${server.is_active ? 'Off' : 'On'}</span>
+                    <button class="btn ${isActive ? 'btn-warning' : 'btn-success'} btn-sm" onclick="toggleVpnServerStatus(${serverId})" title="${isActive ? 'Deactivate' : 'Activate'} Server">
+                        <i class="fas fa-${isActive ? 'pause' : 'play'}"></i>
+                        <span class="action-label">${isActive ? 'Off' : 'On'}</span>
                     </button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteVpnServer(${server.id}, '${escapeHtml(server.name)}')" title="Delete Server">
+                    <button class="btn btn-danger btn-sm" onclick="deleteVpnServer(${serverId}, '${onclickName}')" title="Delete Server">
                         <i class="fas fa-trash"></i>
                         <span class="action-label">Del</span>
                     </button>
                 </div>
             </td>
         </tr>
-    `).join('');
+        `;
+    }).join('');
 }
 
 // Update country filter dropdown
@@ -4390,13 +4441,13 @@ function updateServerCountryFilter() {
     const countryFilter = document.getElementById('serverCountryFilter');
     if (!countryFilter) return;
 
-    const countries = [...new Set(vpnServers.map(server => server.country_short))].sort();
+    const countries = [...new Set(vpnServers.map(server => server.country_short).filter(Boolean))].sort();
 
     // Keep the "All Countries" option and add countries
     countryFilter.innerHTML = '<option value="">All Countries</option>' +
         countries.map(country => {
             const countryName = vpnServers.find(s => s.country_short === country)?.country_long || country;
-            return `<option value="${country}">${countryName} (${country})</option>`;
+            return `<option value="${escapeHtml(country)}">${escapeHtml(countryName)} (${escapeHtml(country)})</option>`;
         }).join('');
 }
 
@@ -4417,7 +4468,7 @@ window.filterVpnServers = function() {
             serverHostname.includes(searchTerm) ||
             serverIp.includes(searchTerm);
 
-        const matchesStatus = !statusFilter || server.is_active.toString() === statusFilter;
+        const matchesStatus = !statusFilter || String(toBooleanValue(server.is_active, false)) === statusFilter;
         const matchesCountry = !countryFilter || serverCountry === countryFilter;
 
         return matchesSearch && matchesStatus && matchesCountry && matchesCustom;
@@ -4598,13 +4649,15 @@ window.deleteVpnServer = async function(serverId, serverName) {
 // Load VPN server filter setting
 window.loadVpnServerFilterSetting = async function() {
     try {
+        window.initializeVpnServerFilterToggle();
         const response = await apiCall('/api/vpn-servers/settings/filter');
-        const showOnlyCustom = response.data.showOnlyCustomServers;
-        showOnlyCustomVpnServers = Boolean(showOnlyCustom);
+        const showOnlyCustom = response.data?.showOnlyCustomServers;
+        showOnlyCustomVpnServers = toBooleanValue(showOnlyCustom, false);
 
         const toggle = document.getElementById('showOnlyCustomServersToggle');
         if (toggle) {
             toggle.checked = showOnlyCustomVpnServers;
+            toggle.disabled = false;
         }
 
         updateVpnServerFilterStatus();
@@ -4626,8 +4679,16 @@ window.toggleCustomServersFilter = async function() {
     const toggle = document.getElementById('showOnlyCustomServersToggle');
     if (!toggle) return;
 
+    window.initializeVpnServerFilterToggle();
     const showOnlyCustom = toggle.checked;
+    const previousValue = showOnlyCustomVpnServers;
+    showOnlyCustomVpnServers = showOnlyCustom;
     toggle.disabled = true;
+    const status = document.getElementById('serverFilterStatus');
+    if (status) {
+        status.textContent = `Saving visibility: ${showOnlyCustom ? 'custom only' : 'all servers'}...`;
+    }
+    filterVpnServers();
 
     try {
         console.log('🔄 Updating VPN server filter setting:', showOnlyCustom);
@@ -4640,7 +4701,7 @@ window.toggleCustomServersFilter = async function() {
         });
 
         console.log('✅ VPN server filter setting updated:', response);
-        showOnlyCustomVpnServers = Boolean(response.data?.showOnlyCustomServers ?? showOnlyCustom);
+        showOnlyCustomVpnServers = toBooleanValue(response.data?.showOnlyCustomServers, showOnlyCustom);
         toggle.checked = showOnlyCustomVpnServers;
 
         // Show success message and update admin table immediately too.
@@ -4652,7 +4713,9 @@ window.toggleCustomServersFilter = async function() {
         showAlert('error', 'Error updating filter setting: ' + error.message);
 
         // Revert the toggle on error
+        showOnlyCustomVpnServers = previousValue;
         toggle.checked = showOnlyCustomVpnServers;
+        filterVpnServers();
     } finally {
         toggle.disabled = false;
         updateVpnServerFilterStatus();
