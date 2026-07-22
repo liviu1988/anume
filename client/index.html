@@ -177,6 +177,99 @@
             height: 24px;
             color: var(--primary-color);
         }
+
+        .config-overview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .config-metric {
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 14px 16px;
+            background: rgba(15, 23, 42, 0.35);
+            min-width: 0;
+        }
+
+        .config-metric-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            margin-bottom: 6px;
+        }
+
+        .config-metric-value {
+            color: var(--text-primary);
+            font-size: 14px;
+            font-weight: 700;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .config-metric-value.mono {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .config-form-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+            gap: 16px;
+            align-items: start;
+        }
+
+        .config-form-stack {
+            display: grid;
+            gap: 14px;
+        }
+
+        .config-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding-top: 6px;
+        }
+
+        .config-side-panel {
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 16px;
+            background: rgba(15, 23, 42, 0.32);
+        }
+
+        .config-side-title {
+            color: var(--text-primary);
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .config-side-copy {
+            color: var(--text-muted);
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 14px;
+        }
+
+        .danger-zone {
+            border-color: rgba(239, 68, 68, 0.35);
+            background: rgba(239, 68, 68, 0.07);
+        }
+
+        @media (max-width: 900px) {
+            .config-form-grid {
+                grid-template-columns: 1fr;
+            }
+        }
         /* Modern Form Styling */
         .form-group {
             margin-bottom: 20px;
@@ -1999,52 +2092,122 @@
                     <div class="card-header">
                         <h2 class="card-title">
                             <i class="fas fa-cog card-icon"></i>
-                            Configuration Management
+                            Portal Configuration
                         </h2>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="loadConfig()">
+                            <i class="fas fa-rotate"></i>
+                            Reload
+                        </button>
                     </div>
                     <div id="configAlert"></div>
-                    <form id="configForm">
-                        <div class="form-group">
-                            <label for="apiUrl">
-                                <i class="fas fa-link" style="margin-right: 8px;"></i>
-                                API URL
-                            </label>
-                            <input type="url" id="apiUrl" name="apiUrl" placeholder="https://example.com/api" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="activationApiUrl">
-                                <i class="fas fa-key" style="margin-right: 8px;"></i>
-                                Activation API URL
-                            </label>
-                            <input type="url" id="activationApiUrl" name="activationApiUrl" placeholder="https://example.com/activation" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="isActive">
-                                <i class="fas fa-toggle-on" style="margin-right: 8px;"></i>
+                    <div class="config-overview">
+                        <div class="config-metric">
+                            <div class="config-metric-label">
+                                <i class="fas fa-circle"></i>
                                 Status
-                            </label>
-                            <select id="isActive" name="isActive">
-                                <option value="true">Active</option>
-                                <option value="false">Inactive</option>
-                            </select>
+                            </div>
+                            <div id="configStatus" class="config-metric-value">Loading...</div>
                         </div>
-                        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-save"></i>
-                                Update Configuration
-                            </button>
-                            <button type="button" class="btn btn-secondary" onclick="loadConfig()">
-                                <i class="fas fa-sync"></i>
-                                Reload
-                            </button>
-                            <button type="button" class="btn btn-warning" onclick="createBackup()">
-                                <i class="fas fa-download"></i>
-                                Create Backup
-                            </button>
-                            <button type="button" class="btn btn-danger" onclick="resetConfig()">
-                                <i class="fas fa-undo"></i>
-                                Reset to Default
-                            </button>
+                        <div class="config-metric">
+                            <div class="config-metric-label">
+                                <i class="fas fa-server"></i>
+                                Current Portal
+                            </div>
+                            <div id="currentPortal" class="config-metric-value mono">Loading...</div>
+                        </div>
+                        <div class="config-metric">
+                            <div class="config-metric-label">
+                                <i class="fas fa-clock"></i>
+                                Last Updated
+                            </div>
+                            <div id="lastUpdated" class="config-metric-value">Never</div>
+                        </div>
+                        <div class="config-metric">
+                            <div class="config-metric-label">
+                                <i class="fas fa-code-branch"></i>
+                                Config Version
+                            </div>
+                            <div id="configVersion" class="config-metric-value mono">-</div>
+                        </div>
+                        <div class="config-metric">
+                            <div class="config-metric-label">
+                                <i class="fas fa-database"></i>
+                                Backups
+                            </div>
+                            <div id="backupCount" class="config-metric-value">0 backups</div>
+                        </div>
+                        <div class="config-metric">
+                            <div class="config-metric-label">
+                                <i class="fas fa-folder-open"></i>
+                                Storage
+                            </div>
+                            <div id="configPath" class="config-metric-value mono">-</div>
+                        </div>
+                    </div>
+                    <form id="configForm">
+                        <div class="config-form-grid">
+                            <div class="config-form-stack">
+                                <div class="form-group">
+                                    <label for="apiUrl">
+                                        <i class="fas fa-link" style="margin-right: 8px;"></i>
+                                        Portal API URL
+                                    </label>
+                                    <input type="url" id="apiUrl" name="apiUrl" placeholder="https://example.com:8080" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="activationApiUrl">
+                                        <i class="fas fa-key" style="margin-right: 8px;"></i>
+                                        Activation API URL
+                                    </label>
+                                    <input type="url" id="activationApiUrl" name="activationApiUrl" placeholder="https://example.com/activation" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="isActive">
+                                        <i class="fas fa-toggle-on" style="margin-right: 8px;"></i>
+                                        App Configuration Status
+                                    </label>
+                                    <select id="isActive" name="isActive">
+                                        <option value="true">Active</option>
+                                        <option value="false">Inactive</option>
+                                    </select>
+                                </div>
+                                <div class="config-actions">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-save"></i>
+                                        Save Portal
+                                    </button>
+                                    <button type="button" class="btn btn-success" onclick="testConnection()">
+                                        <i class="fas fa-plug"></i>
+                                        Test
+                                    </button>
+                                    <button type="button" class="btn btn-warning" onclick="createBackup()">
+                                        <i class="fas fa-download"></i>
+                                        Backup
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="config-form-stack">
+                                <div class="config-side-panel">
+                                    <div class="config-side-title">Live App Sync</div>
+                                    <div class="config-side-copy">
+                                        Saving creates a new config version and sends a no-cache response so the Android app can detect portal changes.
+                                    </div>
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="loadConfig()">
+                                        <i class="fas fa-sync"></i>
+                                        Pull Current Config
+                                    </button>
+                                </div>
+                                <div class="config-side-panel danger-zone">
+                                    <div class="config-side-title">Reset</div>
+                                    <div class="config-side-copy">
+                                        Restores the default portal after creating a backup. Use this only when the current portal is broken.
+                                    </div>
+                                    <button type="button" class="btn btn-danger btn-sm" onclick="resetConfig()">
+                                        <i class="fas fa-undo"></i>
+                                        Reset to Default
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </form>
                 </div>
@@ -3023,6 +3186,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="app.js?v=5.1&t=1784705596"></script>
+    <script src="app.js?v=5.2&t=1784744800"></script>
 </body>
 </html>

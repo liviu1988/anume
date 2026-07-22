@@ -4,21 +4,22 @@ const logger = require('../utils/logger');
 
 class ConfigService {
   constructor() {
-    // Calculate the correct path to the Flutter app's config file
-    const currentDir = process.cwd();
-    console.log('🔧 Current working directory:', currentDir);
-
-    const basePath = path.dirname(path.dirname(currentDir)); // Go up two levels from admin_panel directory
-    console.log('🔧 Base path (two levels up):', basePath);
-
-    const flutterConfigPath = path.join(basePath, 'Main_anume_all_done', 'anume', 'lib', 'config', 'remote_config.json');
-    console.log('🔧 Calculated Flutter config path:', flutterConfigPath);
-
-    console.log('🔧 Environment variable ANUME_CONFIG_PATH:', process.env.ANUME_CONFIG_PATH);
-    this.configPath = flutterConfigPath; // Always use the calculated path
+    this.configPath = this.resolveConfigPath();
     this.backupDir = path.resolve(process.env.BACKUP_DIR || './backups');
-    console.log('🔧 Final resolved config path:', this.configPath);
+    logger.info('Remote configuration storage initialized', {
+      configPath: this.configPath,
+      backupDir: this.backupDir,
+    });
     this.ensureBackupDir();
+  }
+
+  resolveConfigPath() {
+    const configuredPath = process.env.ANUME_CONFIG_PATH;
+    if (configuredPath && configuredPath.trim()) {
+      return path.resolve(configuredPath.trim());
+    }
+
+    return path.resolve(process.cwd(), 'config', 'remote_config.json');
   }
 
   async ensureBackupDir() {
@@ -31,19 +32,31 @@ class ConfigService {
 
   // Default configuration template
   getDefaultConfig() {
+    const now = new Date().toISOString();
     return {
       apiUrl: 'http://nuconteaza.mmager.ro:8080',
       username: 'test',
       password: 'test',
       activationApiUrl: 'https://www.xtream.ro/appactivation',
-      lastUpdated: new Date().toISOString(),
+      lastUpdated: now,
       isActive: true,
       additionalSettings: {
         timeout: 30000,
         retryAttempts: 3,
         enableLogging: true
       },
-      version: '1.0.0'
+      version: now
+    };
+  }
+
+  getPublicConfig(config) {
+    return {
+      apiUrl: config.apiUrl,
+      activationApiUrl: config.activationApiUrl,
+      lastUpdated: config.lastUpdated,
+      version: config.version || config.lastUpdated,
+      isActive: config.isActive,
+      additionalSettings: config.additionalSettings || {}
     };
   }
 
@@ -144,11 +157,15 @@ class ConfigService {
       const configDir = path.dirname(this.configPath);
       await fs.mkdir(configDir, { recursive: true });
 
-      // Update lastUpdated timestamp
-      config.lastUpdated = new Date().toISOString();
+      // Update lastUpdated and version so connected apps can detect changes.
+      const now = new Date().toISOString();
+      config.lastUpdated = now;
+      config.version = now;
 
-      // Write configuration
-      await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), 'utf8');
+      // Write configuration atomically to avoid partial or reset-looking files.
+      const tempPath = `${this.configPath}.tmp`;
+      await fs.writeFile(tempPath, JSON.stringify(config, null, 2), 'utf8');
+      await fs.rename(tempPath, this.configPath);
       
       logger.info('Configuration written successfully', {
         apiUrl: config.apiUrl,

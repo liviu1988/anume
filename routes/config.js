@@ -2,29 +2,36 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const configService = require('../services/configService');
 const logger = require('../utils/logger');
-const https = require('https');
-const http = require('http');
-const { URL } = require('url');
 const authMiddleware = require('../middleware/auth');
 
 const router = express.Router();
+
+function setNoStoreHeaders(res) {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+}
+
+function getSafeConfig(config) {
+  const safeConfig = { ...config };
+  if (safeConfig.password) {
+    safeConfig.password = '***';
+  }
+  return safeConfig;
+}
 
 // Get current configuration for app (no authentication required)
 router.get('/app', async (req, res) => {
   try {
     const config = await configService.readConfig();
+    const appConfig = configService.getPublicConfig(config);
 
-    // Return only the fields needed by the app (no sensitive data)
-    const appConfig = {
-      apiUrl: config.apiUrl,
-      activationApiUrl: config.activationApiUrl,
-      lastUpdated: config.lastUpdated,
-      isActive: config.isActive,
-      additionalSettings: config.additionalSettings || {}
-    };
-
+    setNoStoreHeaders(res);
     res.json({
+      success: true,
       config: appConfig,
+      version: appConfig.version,
       message: 'Configuration retrieved successfully'
     });
   } catch (error) {
@@ -42,13 +49,13 @@ router.get('/', authMiddleware, async (req, res) => {
     const config = await configService.readConfig();
 
     // Don't send password in response for security
-    const safeConfig = { ...config };
-    if (safeConfig.password) {
-      safeConfig.password = '***';
-    }
+    const safeConfig = getSafeConfig(config);
 
+    setNoStoreHeaders(res);
     res.json({
+      success: true,
       config: safeConfig,
+      version: safeConfig.version || safeConfig.lastUpdated,
       message: 'Configuration retrieved successfully'
     });
   } catch (error) {
@@ -105,17 +112,19 @@ router.put('/', authMiddleware, [
 
     // Broadcast configuration update to connected clients
     if (req.io) {
-      const safeConfig = { ...savedConfig };
-      safeConfig.password = '***';
+      const safeConfig = getSafeConfig(savedConfig);
       req.io.to('config-updates').emit('config-updated', safeConfig);
+      req.io.to('config-updates').emit('app-config-updated', configService.getPublicConfig(savedConfig));
     }
 
     // Don't send password in response
-    const safeConfig = { ...savedConfig };
-    safeConfig.password = '***';
+    const safeConfig = getSafeConfig(savedConfig);
 
+    setNoStoreHeaders(res);
     res.json({
+      success: true,
       config: safeConfig,
+      version: safeConfig.version || safeConfig.lastUpdated,
       message: 'Configuration updated successfully'
     });
   } catch (error) {
@@ -131,8 +140,11 @@ router.put('/', authMiddleware, [
 router.get('/status', authMiddleware, async (req, res) => {
   try {
     const status = await configService.getConfigStatus();
+    setNoStoreHeaders(res);
     res.json({
+      success: true,
       status,
+      version: status.version || status.lastUpdated,
       message: 'Configuration status retrieved successfully'
     });
   } catch (error) {
@@ -228,6 +240,7 @@ router.post('/test-connection', authMiddleware, async (req, res) => {
 
     logger.info(`Connection test performed by admin: ${req.user.username} - Success: ${successCount}/${totalTests}`);
 
+    setNoStoreHeaders(res);
     res.json({
       success: overallSuccess,
       message: overallSuccess ? 'All connections successful' :
@@ -412,9 +425,9 @@ router.post('/restore/:backupFileName', authMiddleware, async (req, res) => {
         try {
           const currentConfig = await configService.readConfig();
           if (currentConfig) {
-            const safeConfig = { ...currentConfig };
-            safeConfig.password = '***';
+            const safeConfig = getSafeConfig(currentConfig);
             req.io.to('config-updates').emit('config-updated', safeConfig);
+            req.io.to('config-updates').emit('app-config-updated', configService.getPublicConfig(currentConfig));
           }
         } catch (configError) {
           logger.warn('Failed to broadcast config update after restore:', configError);
@@ -476,17 +489,19 @@ router.post('/reset', authMiddleware, async (req, res) => {
 
     // Broadcast configuration update to connected clients
     if (req.io) {
-      const safeConfig = { ...savedConfig };
-      safeConfig.password = '***';
+      const safeConfig = getSafeConfig(savedConfig);
       req.io.to('config-updates').emit('config-reset', safeConfig);
+      req.io.to('config-updates').emit('app-config-updated', configService.getPublicConfig(savedConfig));
     }
 
     // Don't send password in response
-    const safeConfig = { ...savedConfig };
-    safeConfig.password = '***';
+    const safeConfig = getSafeConfig(savedConfig);
 
+    setNoStoreHeaders(res);
     res.json({
+      success: true,
       config: safeConfig,
+      version: safeConfig.version || safeConfig.lastUpdated,
       message: 'Configuration reset to default successfully'
     });
   } catch (error) {
@@ -507,17 +522,19 @@ router.post('/reload', authMiddleware, async (req, res) => {
 
     // Broadcast configuration update to connected clients
     if (req.io) {
-      const safeConfig = { ...config };
-      safeConfig.password = '***';
+      const safeConfig = getSafeConfig(config);
       req.io.to('config-updates').emit('config-reloaded', safeConfig);
+      req.io.to('config-updates').emit('app-config-updated', configService.getPublicConfig(config));
     }
 
     // Don't send password in response
-    const safeConfig = { ...config };
-    safeConfig.password = '***';
+    const safeConfig = getSafeConfig(config);
 
+    setNoStoreHeaders(res);
     res.json({
+      success: true,
       config: safeConfig,
+      version: safeConfig.version || safeConfig.lastUpdated,
       message: 'Configuration reloaded successfully'
     });
   } catch (error) {
@@ -525,102 +542,6 @@ router.post('/reload', authMiddleware, async (req, res) => {
     res.status(500).json({
       error: 'Internal server error',
       message: 'Failed to reload configuration'
-    });
-  }
-});
-
-// Test connection to API URLs
-router.post('/test-connection', authMiddleware, async (req, res) => {
-  try {
-    const config = await configService.readConfig();
-
-    const results = {
-      apiUrl: { status: 'unknown', message: '', responseTime: 0 },
-      activationApiUrl: { status: 'unknown', message: '', responseTime: 0 }
-    };
-
-    // Helper function to test a URL
-    const testUrl = (url) => {
-      return new Promise((resolve) => {
-        const startTime = Date.now();
-        try {
-          const urlObj = new URL(url);
-          const isHttps = urlObj.protocol === 'https:';
-          const client = isHttps ? https : http;
-
-          const options = {
-            hostname: urlObj.hostname,
-            port: urlObj.port || (isHttps ? 443 : 80),
-            path: urlObj.pathname + urlObj.search,
-            method: 'GET',
-            timeout: 10000,
-            headers: {
-              'User-Agent': 'Anume-Admin-Panel/1.0'
-            }
-          };
-
-          const req = client.request(options, (response) => {
-            const responseTime = Date.now() - startTime;
-            resolve({
-              status: response.statusCode < 400 ? 'success' : 'warning',
-              message: `HTTP ${response.statusCode} - ${responseTime}ms`,
-              responseTime
-            });
-            response.destroy(); // Close the response to free resources
-          });
-
-          req.on('error', (error) => {
-            const responseTime = Date.now() - startTime;
-            resolve({
-              status: 'error',
-              message: error.code === 'ECONNREFUSED' ? 'Connection refused' : error.message,
-              responseTime
-            });
-          });
-
-          req.on('timeout', () => {
-            const responseTime = Date.now() - startTime;
-            req.destroy();
-            resolve({
-              status: 'error',
-              message: 'Request timeout',
-              responseTime
-            });
-          });
-
-          req.end();
-        } catch (error) {
-          const responseTime = Date.now() - startTime;
-          resolve({
-            status: 'error',
-            message: error.message,
-            responseTime
-          });
-        }
-      });
-    };
-
-    // Test API URL
-    if (config.apiUrl) {
-      results.apiUrl = await testUrl(config.apiUrl);
-    }
-
-    // Test Activation API URL
-    if (config.activationApiUrl) {
-      results.activationApiUrl = await testUrl(config.activationApiUrl);
-    }
-
-    logger.info(`Connection test performed by user: ${req.user.username}`, results);
-
-    res.json({
-      results,
-      message: 'Connection test completed'
-    });
-  } catch (error) {
-    logger.error('Failed to test connection:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: 'Failed to test connection'
     });
   }
 });

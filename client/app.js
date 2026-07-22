@@ -1,7 +1,7 @@
-console.log('🚀 Admin Panel JavaScript v5.1 loaded successfully! Modern UI with tabs and user management!');
-console.log('📋 Available functions: Tab navigation, user management, online tracking, admin accounts');
-console.log('🔧 If buttons still don\'t work, try hard refresh: Ctrl+F5 (Windows) or Cmd+Shift+R (Mac)');
-console.log('⏰ Loaded at:', new Date().toLocaleTimeString());
+console.log('Admin Panel JavaScript v5.2 loaded successfully. Portal sync fixes are active.');
+console.log('Available functions: tab navigation, user management, online tracking, admin accounts');
+console.log('If buttons still do not work, try hard refresh: Ctrl+F5 (Windows) or Cmd+Shift+R (Mac)');
+console.log('Loaded at:', new Date().toLocaleTimeString());
 
 // Global variables for user management
 let currentUsers = [];
@@ -18,8 +18,8 @@ let selectedUsers = new Set();
 
 // Test function to verify JavaScript is working
 window.testJS = function() {
-    alert('✅ JavaScript v5.1 is working! Modern UI with tabs and user management.');
-    console.log('✅ JavaScript test successful');
+    alert('JavaScript v5.2 is working. Portal sync fixes are active.');
+    console.log('JavaScript test successful');
 };
 
 // Tab Management Functions
@@ -428,7 +428,7 @@ window.showAlert = function(message, type = 'info', duration = 5000) {
 document.addEventListener('DOMContentLoaded', function() {
     const versionEl = document.getElementById('jsVersion');
     if (versionEl) {
-        versionEl.textContent = 'JS: v5.1 ✅';
+        versionEl.textContent = 'JS: v5.2';
         versionEl.style.color = '#10b981';
     }
 
@@ -1868,6 +1868,7 @@ class AdminPanel {
             const data = await parseApiResponse(response);
 
             if (response.ok) {
+                this.populateConfigForm(data.config);
                 this.showAlert('configAlert', 'Configuration updated successfully!', 'success');
                 this.loadStatus();
             } else {
@@ -2252,7 +2253,7 @@ class AdminPanel {
                 body: JSON.stringify(backupConfig)
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 window.showAlert(`Configuration restored from uploaded file: ${file.name}`, 'success');
@@ -2280,7 +2281,7 @@ class AdminPanel {
                 }
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 this.populateConfigForm(data.config);
@@ -2295,16 +2296,42 @@ class AdminPanel {
     }
 
     populateConfigForm(config) {
+        if (!config) return;
         document.getElementById('apiUrl').value = config.apiUrl || '';
         document.getElementById('activationApiUrl').value = config.activationApiUrl || 'https://www.xtream.ro/appactivation';
         document.getElementById('isActive').value = config.isActive ? 'true' : 'false';
+        this.updateConfigSummary(config);
+    }
+
+    setTextContent(id, value) {
+        const element = document.getElementById(id);
+        if (element) {
+            element.textContent = value;
+        }
+    }
+
+    formatDateTime(value) {
+        if (!value) return 'Never';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value);
+        return date.toLocaleString();
+    }
+
+    updateConfigSummary(config) {
+        this.setTextContent('currentPortal', config.apiUrl || '-');
+        this.setTextContent('configVersion', config.version || config.lastUpdated || '-');
+        this.setTextContent('lastUpdated', this.formatDateTime(config.lastUpdated));
+        this.setTextContent('configStatus', config.isActive ? 'Active' : 'Inactive');
     }
 
     updateStatusDisplay(status) {
-        document.getElementById('configStatus').textContent = status.exists ? 'Active' : 'Not Found';
-        document.getElementById('lastUpdated').textContent = status.lastUpdated ?
-            new Date(status.lastUpdated).toLocaleString() : 'Never';
-        document.getElementById('backupCount').textContent = `${status.backupCount} backups`;
+        if (!status) return;
+        this.setTextContent('configStatus', status.exists ? (status.isActive ? 'Active' : 'Inactive') : 'Not Found');
+        this.setTextContent('lastUpdated', this.formatDateTime(status.lastUpdated));
+        this.setTextContent('backupCount', `${status.backupCount || 0} backups`);
+        this.setTextContent('currentPortal', status.apiUrl || '-');
+        this.setTextContent('configVersion', status.version || status.lastUpdated || '-');
+        this.setTextContent('configPath', status.path || '-');
     }
 
     updateAppStatus(status) {
@@ -2353,7 +2380,7 @@ class AdminPanel {
                 }
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 this.populateConfigForm(data.config);
@@ -2378,7 +2405,7 @@ class AdminPanel {
                 }
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 const results = data.results;
@@ -2772,11 +2799,11 @@ function uploadBackup() {
 
 function resetConfig() {
     console.log('resetConfig button clicked');
-    if (window.adminPanel && window.adminPanel.resetToDefault) {
-        window.adminPanel.resetToDefault();
+    if (window.adminPanel && window.adminPanel.resetConfig) {
+        window.adminPanel.resetConfig();
     } else {
-        console.error('adminPanel.resetToDefault not found');
-        alert('Error: resetToDefault function not available');
+        console.error('adminPanel.resetConfig not found');
+        alert('Error: resetConfig function not available');
     }
 }
 
