@@ -1,4 +1,4 @@
-console.log('🚀 Admin Panel JavaScript v5.0 loaded successfully! Modern UI with tabs and user management!');
+console.log('🚀 Admin Panel JavaScript v5.1 loaded successfully! Modern UI with tabs and user management!');
 console.log('📋 Available functions: Tab navigation, user management, online tracking, admin accounts');
 console.log('🔧 If buttons still don\'t work, try hard refresh: Ctrl+F5 (Windows) or Cmd+Shift+R (Mac)');
 console.log('⏰ Loaded at:', new Date().toLocaleTimeString());
@@ -18,7 +18,7 @@ let selectedUsers = new Set();
 
 // Test function to verify JavaScript is working
 window.testJS = function() {
-    alert('✅ JavaScript v5.0 is working! Modern UI with tabs and user management.');
+    alert('✅ JavaScript v5.1 is working! Modern UI with tabs and user management.');
     console.log('✅ JavaScript test successful');
 };
 
@@ -428,7 +428,7 @@ window.showAlert = function(message, type = 'info', duration = 5000) {
 document.addEventListener('DOMContentLoaded', function() {
     const versionEl = document.getElementById('jsVersion');
     if (versionEl) {
-        versionEl.textContent = 'JS: v5.0 ✅';
+        versionEl.textContent = 'JS: v5.1 ✅';
         versionEl.style.color = '#10b981';
     }
 
