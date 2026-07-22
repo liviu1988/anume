@@ -90,9 +90,46 @@ window.closeModal = function(modalId) {
 };
 
 // API Helper Functions
+async function parseApiResponse(response) {
+    const contentType = response.headers.get('content-type') || '';
+    const rawText = await response.text();
+
+    if (!rawText) {
+        return {};
+    }
+
+    if (contentType.includes('application/json')) {
+        try {
+            return JSON.parse(rawText);
+        } catch (error) {
+            throw new Error(`Invalid JSON response from server (${response.status})`);
+        }
+    }
+
+    try {
+        return JSON.parse(rawText);
+    } catch (error) {
+        return {
+            message: rawText
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 240) || `Unexpected server response (${response.status})`
+        };
+    }
+}
+
+function buildApiError(response, data) {
+    const serverMessage = data?.message || data?.error;
+    const fallback = response.statusText || 'API call failed';
+    return new Error(`${serverMessage || fallback} (${response.status})`);
+}
+
 async function apiCall(endpoint, options = {}) {
     const token = localStorage.getItem('adminToken');
     const sessionToken = localStorage.getItem('sessionToken');
+    const timeoutMs = options.timeoutMs || 20000;
+    const controller = options.signal ? null : new AbortController();
 
     const defaultOptions = {
         headers: {
@@ -105,20 +142,37 @@ async function apiCall(endpoint, options = {}) {
     const finalOptions = {
         ...defaultOptions,
         ...options,
+        signal: options.signal || controller?.signal,
         headers: {
             ...defaultOptions.headers,
             ...options.headers
         }
     };
+    delete finalOptions.timeoutMs;
 
-    const response = await fetch(endpoint, finalOptions);
-    const data = await response.json();
+    const timeoutId = controller
+        ? setTimeout(() => controller.abort(), timeoutMs)
+        : null;
 
-    if (!response.ok) {
-        throw new Error(data.message || 'API call failed');
+    try {
+        const response = await fetch(endpoint, finalOptions);
+        const data = await parseApiResponse(response);
+
+        if (!response.ok) {
+            throw buildApiError(response, data);
+        }
+
+        return data;
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+        }
+        throw error;
+    } finally {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
     }
-
-    return data;
 }
 
 // User Management Functions
@@ -428,7 +482,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.log('🧪 Response status:', response.status);
                 console.log('🧪 Response headers:', response.headers);
 
-                const data = await response.json();
+                const data = await parseApiResponse(response);
                 console.log('🧪 Response data:', data);
 
                 if (data.conversations) {
@@ -1732,7 +1786,7 @@ class AdminPanel {
                 })
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok && data.success) {
                 this.token = data.token;
@@ -1778,7 +1832,7 @@ class AdminPanel {
                 }
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 this.populateConfigForm(data.config);
@@ -1811,7 +1865,7 @@ class AdminPanel {
                 })
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 this.showAlert('configAlert', 'Configuration updated successfully!', 'success');
@@ -1834,7 +1888,7 @@ class AdminPanel {
                 }
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 this.updateStatusDisplay(data.status);
@@ -1853,7 +1907,7 @@ class AdminPanel {
                 }
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 this.showAlert('configAlert', `Backup created: ${data.backupFileName}`, 'success');
@@ -1875,7 +1929,7 @@ class AdminPanel {
                 }
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 this.displayBackups(data.backups);
@@ -2043,7 +2097,7 @@ class AdminPanel {
                 })
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 const restoredItems = data.restoredItems || [];
@@ -2146,7 +2200,7 @@ class AdminPanel {
                 }
             });
 
-            const data = await response.json();
+            const data = await parseApiResponse(response);
 
             if (response.ok) {
                 window.showAlert(`🗑️ Backup deleted: ${backupFileName}`, 'success');
